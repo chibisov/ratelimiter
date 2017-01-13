@@ -20,7 +20,7 @@ import time
 import sys
 
 __author__ = 'Frazer McLean <frazer@frazermclean.co.uk>'
-__version__ = '1.0.2'
+__version__ = '1.1.0'
 __license__ = 'Apache'
 __description__ = 'Simple python rate limiting object'
 
@@ -48,6 +48,7 @@ class RateLimiter(object):
         self.period = period
         self.max_calls = max_calls
         self.callback = callback
+        self._lock = threading.Lock()
 
         if PY35:
             import asyncio
@@ -64,28 +65,30 @@ class RateLimiter(object):
         return wrapped
 
     def __enter__(self):
-        # We want to ensure that no more than max_calls were run in the allowed
-        # period. For this, we store the last timestamps of each call and run
-        # the rate verification upon each __enter__ call.
-        if len(self.calls) >= self.max_calls:
-            until = time.time() + self.period - self._timespan
-            if self.callback:
-                t = threading.Thread(target=self.callback, args=(until,))
-                t.daemon = True
-                t.start()
-            sleeptime = until - time.time()
-            if sleeptime > 0:
-                time.sleep(sleeptime)
-        return self
+        with self._lock:
+            # We want to ensure that no more than max_calls were run in the allowed
+            # period. For this, we store the last timestamps of each call and run
+            # the rate verification upon each __enter__ call.
+            if len(self.calls) >= self.max_calls:
+                until = time.time() + self.period - self._timespan
+                if self.callback:
+                    t = threading.Thread(target=self.callback, args=(until,))
+                    t.daemon = True
+                    t.start()
+                sleeptime = until - time.time()
+                if sleeptime > 0:
+                    time.sleep(sleeptime)
+            return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Store the last operation timestamp.
-        self.calls.append(time.time())
+        with self._lock:
+            # Store the last operation timestamp.
+            self.calls.append(time.time())
 
-        # Pop the timestamp list front (ie: the older calls) until the sum goes
-        # back below the period. This is our 'sliding period' window.
-        while self._timespan >= self.period:
-            self.calls.popleft()
+            # Pop the timestamp list front (ie: the older calls) until the sum goes
+            # back below the period. This is our 'sliding period' window.
+            while self._timespan >= self.period:
+                self.calls.popleft()
 
     if PY35:
         import asyncio
